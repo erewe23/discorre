@@ -446,6 +446,16 @@ async def on_message(message):
                     await check_user_restoration(uid_str)
     await bot.process_commands(message)
 
+def get_next_demotion_time_and_left(now_est):
+    deadline_est = now_est.replace(hour=18, minute=0, second=0, microsecond=0)
+    if now_est >= deadline_est:
+        deadline_est += timedelta(days=1)
+    time_left = deadline_est - now_est
+    unix_ts = int(deadline_est.timestamp())
+    hours, remainder = divmod(time_left.seconds, 3600)
+    minutes = remainder // 60
+    return deadline_est, f"{time_left.days}d {hours}h {minutes}m", unix_ts
+
 async def run_demotion_check():
     global demoted_users
     est = timezone(timedelta(hours=-5))
@@ -494,6 +504,8 @@ async def run_demotion_check():
                         current_counts[uid] += 1
 
     demotion_details = []
+    now_est = datetime.now(timezone(timedelta(hours=-5)))
+    deadline_est, time_left_str, unix_ts = get_next_demotion_time_and_left(now_est)
     for uid, count in current_counts.items():
         required = get_daily_required_videos(uid)
         missing_today = required - count
@@ -505,7 +517,7 @@ async def run_demotion_check():
             roles_to_show = demoted_users[str(uid)]["roles"]
             missing_videos = demoted_users[str(uid)]["missing"]
             demotion_details.append(
-                f"<@{uid}>: You need to upload {missing_videos} videos to restore your roles. (Roles lost: {', '.join(str(r) for r in roles_to_show)})"
+                f"<@{uid}>: You need to upload {missing_videos} videos to restore your roles. (Roles lost: {', '.join(str(r) for r in roles_to_show)})\nTime left until next demotion: {time_left_str} (<t:{unix_ts}:R>)"
             )
             await send_bot_log(f"Already demoted: {uid} (missing={missing_videos})")
             save_demoted_data(demoted_users)
@@ -539,7 +551,7 @@ async def run_demotion_check():
                 }
                 save_demoted_data(demoted_users)
                 demotion_details.append(
-                    f"<@{uid}>: You need to upload {missing_today} videos to restore your roles. (Roles lost: {', '.join(str(r) for r in managed_roles_ids)})"
+                    f"<@{uid}>: You need to upload {missing_today} videos to restore your roles. (Roles lost: {', '.join(str(r) for r in managed_roles_ids)})\nTime left until next demotion: {time_left_str} (<t:{unix_ts}:R>)"
                 )
                 await send_bot_log(
                     f"DEMOTED <@{uid}> ({DISCORD_USERNAMES.get(uid, '?')}) -- Removed roles: {managed_roles_ids} | "
@@ -597,6 +609,9 @@ async def reminder_loop():
             track_channel = await bot.fetch_channel(VIDEO_TRACK_CHANNEL_ID)
         except:
             return
+
+    deadline_est, time_left_str, unix_ts = get_next_demotion_time_and_left(datetime.now(est_offset))
+
     current_counts = {uid: 0 for uid in USER_MAPPING}
     async for msg in track_channel.history(limit=2000, after=period_start, before=now_utc):
         content = ""
@@ -656,12 +671,12 @@ async def reminder_loop():
         if str(uid) in demoted_users and lost_roles:
             extra_needed = max(0, required_count - count)
             line = (
-                f"<@{uid}>: You need to upload {missing} videos to restore your roles, and {extra_needed} more today to avoid being demoted again."
+                f"<@{uid}>: You need to upload {missing} videos to restore your roles, and {extra_needed} more today to avoid being demoted again.\nTime left until next demotion: {time_left_str} (<t:{unix_ts}:R>)"
             )
             msg_lines.append(line)
         elif count < required_count:
             msg_lines.append(
-                f"<@{uid}>: You need to upload {required_count - count} more videos today to keep your roles."
+                f"<@{uid}>: You need to upload {required_count - count} more videos today to keep your roles.\nTime left until next demotion: {time_left_str} (<t:{unix_ts}:R>)"
             )
         else:
             done_lines.append(f"<@{uid}>: You have met today's requirement ({count}/{required_count}).")
